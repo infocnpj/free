@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Consulta de CNPJs - Casa dos Dados</title>
+<style>
+    body { font-family: Arial; background:#f5f5f5; padding:20px; }
+    table { width:100%; border-collapse:collapse; margin-top:20px; }
+    th, td { border:1px solid #ccc; padding:8px; text-align:left; vertical-align:top; }
+    th { background:#ddd; }
+    tr:hover { background:#eef; cursor:pointer; }
+    .detalhes { background:#fafafa; padding:10px; }
+    .campo { font-weight:bold; color:#0056b3; }
+    .valor { color:#333; margin-left:5px; }
+    textarea { width:100%; height:70px; margin-top:10px; }
+    button { margin-top:10px; padding:10px; cursor:pointer; }
+</style>
+</head>
+<body>
+<h2>Consulta de CNPJs - Casa dos Dados</h2>
+
+<input type="file" id="arquivo" accept=".txt">
+<button id="processar">📂 Processar TXT</button>
+<button id="exportar">💾 Salvar HTML</button>
+
+<table id="tabela">
+    <tr>
+        <th>CNPJ</th>
+        <th>Razão Social</th>
+        <th>Nome Fantasia</th>
+    </tr>
+</table>
+
+<script>
+let trAberto = null; // guarda a linha de detalhes aberta
+
+function validarCNPJ(cnpj) {
+    cnpj = cnpj.replace(/\D/g,'');
+    if(cnpj.length !== 14) return false;
+    let numeros = cnpj.split('').map(Number);
+    let pesos1 = [5,4,3,2,9,8,7,6,5,4,3,2];
+    let soma = numeros.slice(0,12).reduce((acc,n,i)=>acc+n*pesos1[i],0);
+    let resto = soma % 11;
+    let dig1 = resto < 2 ? 0 : 11 - resto;
+    if(dig1 !== numeros[12]) return false;
+    let pesos2 = [6,5,4,3,2,9,8,7,6,5,4,3,2];
+    soma = numeros.slice(0,13).reduce((acc,n,i)=>acc+n*pesos2[i],0);
+    resto = soma % 11;
+    let dig2 = resto < 2 ? 0 : 11 - resto;
+    return dig2 === numeros[13];
+}
+
+function formatarCNPJ(cnpj){
+    return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,"$1.$2.$3/$4-$5");
+}
+
+async function consultarCNPJ(cnpj) {
+    const apiKey = "3626fc37320422eda3364a02df786e7a77740c6beabd20bcfcb353ec720a71139a8db62add18ec5447812352550e715dc53f0956872f27285673ab0905e9f98d";
+    const res = await fetch(`https://api.casadosdados.com.br/v4/cnpj/${cnpj}`, {
+        method: "GET",
+        headers: { "Content-Type":"application/json", "api-key": apiKey }
+    });
+    if(!res.ok) throw new Error(`Erro na API: ${res.status}`);
+    return await res.json();
+}
+
+function salvarObservacao(el){
+    localStorage.setItem("obs_"+el.dataset.cnpj, el.value);
+}
+
+function carregarObservacoes(){
+    document.querySelectorAll("textarea").forEach(t=>{
+        let v = localStorage.getItem("obs_"+t.dataset.cnpj);
+        if(v) t.value = v;
+    });
+}
+
+function exportarHTML(){
+    const html = document.documentElement.outerHTML;
+    const blob = new Blob([html], {type:"text/html"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "cnpjs_completo.html";
+    a.click();
+}
+
+function criarDetalhesHTML(data){
+    let html = '<div class="detalhes">';
+    html += `<div><span class="campo">CNPJ:</span><span class="valor">${data.cnpj}</span></div>`;
+    html += `<div><span class="campo">Razão Social:</span><span class="valor">${data.razao_social}</span></div>`;
+    html += `<div><span class="campo">Nome Fantasia:</span><span class="valor">${data.nome_fantasia}</span></div>`;
+    html += `<div><span class="campo">Atividade Principal:</span><span class="valor">${data.atividade_principal.codigo} - ${data.atividade_principal.descricao}</span></div>`;
+    if(data.atividade_secundaria && data.atividade_secundaria.length){
+        html += `<div><span class="campo">Atividades Secundárias:</span><span class="valor">`;
+        html += data.atividade_secundaria.map(a=>`${a.codigo} - ${a.descricao}`).join(', ');
+        html += `</span></div>`;
+    }
+    html += `<div><span class="campo">Situação:</span><span class="valor">${data.situacao_cadastral.situacao_atual}</span></div>`;
+    html += `<div><span class="campo">Capital Social:</span><span class="valor">R$ ${data.capital_social.toLocaleString()}</span></div>`;
+    if(data.endereco){
+        html += `<div><span class="campo">Endereço:</span><span class="valor">${data.endereco.logradouro}, ${data.endereco.numero}, ${data.endereco.bairro}, ${data.endereco.municipio}-${data.endereco.uf}, CEP: ${data.endereco.cep}</span></div>`;
+    }
+    if(data.contato_telefonico && data.contato_telefonico.length){
+        html += `<div><span class="campo">Telefones:</span><span class="valor">`;
+        html += data.contato_telefonico.map(t=>t.completo).join(', ');
+        html += `</span></div>`;
+    }
+    if(data.contato_email && data.contato_email.length){
+        html += `<div><span class="campo">Emails:</span><span class="valor">`;
+        html += data.contato_email.map(e=>e.email).join(', ');
+        html += `</span></div>`;
+    }
+    if(data.quadro_societario && data.quadro_societario.length){
+        html += `<div><span class="campo">Sócios:</span><span class="valor">`;
+        html += data.quadro_societario.map(s=>`${s.nome} (${s.qualificacao_socio})`).join('; ');
+        html += `</span></div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
+// ---------------- PROCESSAMENTO ----------------
+document.getElementById("processar").onclick = async () => {
+    const arquivoInput = document.getElementById("arquivo");
+    if(!arquivoInput.files.length){ alert("Selecione um arquivo TXT!"); return; }
+
+    const texto = await arquivoInput.files[0].text();
+    let cnpjs = (texto.match(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}\-?\d{2}/g) || [])
+        .map(c=>c.replace(/\D/g,''))
+        .filter(validarCNPJ);
+
+    if(!cnpjs.length){ alert("Nenhum CNPJ válido encontrado"); return; }
+
+    const tabela = document.getElementById("tabela");
+
+    for(let i=0;i<cnpjs.length;i++){
+        const cnpj = cnpjs[i];
+        const cnpjFormatado = formatarCNPJ(cnpj);
+        console.log(`Consultando ${i+1}/${cnpjs.length}: ${cnpjFormatado}`);
+
+        try{
+            const data = await consultarCNPJ(cnpj);
+
+            const tr1 = document.createElement("tr");
+            tr1.innerHTML = `<td>${cnpjFormatado}</td><td>${data.razao_social || 'Não encontrado'}</td><td>${data.nome_fantasia || 'Não encontrado'}</td>`;
+
+            const tr2 = document.createElement("tr");
+            tr2.style.display = "none";
+            tr2.innerHTML = `<td colspan="3">${criarDetalhesHTML(data)}<br><b>Observações:</b><br>
+                <textarea data-cnpj="${cnpjFormatado}" oninput="salvarObservacao(this)"></textarea></td>`;
+
+            tr1.addEventListener("click", () => {
+                // fecha linha anterior se existir
+                if(trAberto && trAberto !== tr2){
+                    trAberto.style.display = "none";
+                }
+                tr2.style.display = tr2.style.display === "none" ? "table-row" : "none";
+                trAberto = tr2.style.display === "none" ? null : tr2;
+            });
+
+            tabela.appendChild(tr1);
+            tabela.appendChild(tr2);
+
+            await new Promise(r => setTimeout(r,1200));
+        }catch(e){
+            console.log("Erro:", cnpjFormatado, e);
+        }
+    }
+
+    carregarObservacoes();
+    alert("Consulta finalizada!");
+}
+
+document.getElementById("exportar").onclick = () => {
+    exportarHTML();
+};
+</script>
+</body>
+</html>
